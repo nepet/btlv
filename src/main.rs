@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, anyhow};
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 use serde_json::{Map, Value};
+use std::fs;
 
 /// Main args of tlv-tool
 #[derive(Parser, Debug)]
@@ -13,15 +14,44 @@ struct Tool {
 #[derive(Subcommand, Debug, Clone)]
 enum Commands {
     /// Encodes TLV-stream into hex.
-    Encode {
-        /// Json encoded data to encode into hex TLV-stream.
-        data: String,
-    },
+    Encode(EncodeArgs),
     /// Decodes TLV-stream from hex.
-    Decode {
-        /// Hex-encoded String.
-        data: String,
-    },
+    Decode(DecodeArgs),
+}
+
+#[derive(Parser, Debug, Clone)]
+#[clap(group(
+    ArgGroup::new("source_type")
+        .required(false)
+        .args(&["file"])
+))]
+struct EncodeArgs {
+    /// The input data or file path.
+    #[arg(index = 1)]
+    input: String,
+
+    /// Read input from file.
+    #[arg(short = 'f', long)]
+    file: bool,
+
+    /// Write output to file.
+    #[arg(short, long)]
+    output: Option<String>,
+}
+
+#[derive(Parser, Debug, Clone)]
+struct DecodeArgs {
+    /// The input data or file path.
+    #[arg(index = 1)]
+    input: String,
+
+    /// Read input from file.
+    #[arg(short = 'f', long)]
+    file: bool,
+
+    /// Write output to file.
+    #[arg(short, long)]
+    output: Option<String>,
 }
 
 struct TlvRecord {
@@ -30,20 +60,43 @@ struct TlvRecord {
     value: Vec<u8>,
 }
 
-fn main() {
+fn main() -> Result<()> {
     let tool = Tool::parse();
 
-    let r = match tool.command {
-        Commands::Encode { data } => encode_json_to_tlv(&data),
-        Commands::Decode { data } => decode_tlv_to_json(&data),
+    match tool.command {
+        Commands::Encode(args) => {
+            let data = if args.file {
+                fs::read_to_string(&args.input)?
+            } else {
+                args.input
+            };
+
+            let output = encode_json_to_tlv(&data)?;
+
+            if let Some(file) = args.output {
+                fs::write(file, output)?;
+            } else {
+                println!("{}", output);
+            }
+        }
+        Commands::Decode(args) => {
+            let data = if args.file {
+                fs::read_to_string(&args.input)?
+            } else {
+                args.input
+            };
+
+            let output = decode_tlv_to_json(&data)?;
+
+            if let Some(file) = args.output {
+                fs::write(file, output)?;
+            } else {
+                println!("{}", output);
+            }
+        }
     };
 
-    match r {
-        Ok(s) => {
-            println!("{}", s)
-        }
-        Err(e) => eprintln!("Error: {}", e),
-    }
+    Ok(())
 }
 
 fn encode_json_to_tlv(json_str: &str) -> Result<String> {
