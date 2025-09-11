@@ -1,0 +1,13 @@
+[package]
+name = "btlv"
+version = "0.1.0"
+edition = "2024"
+description = "A CLI tool to encode/decode Lightning Network, BOLT specified TLV messages"
+authors = ["Peter Neuroth <pet.v.ne@gmail.com>"]
+license = "MIT"
+
+[[bin]]
+name = "btlv"
+path = "src/main.rs"
+
+[dependencies]
