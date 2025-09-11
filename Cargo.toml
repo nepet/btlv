@@ -1,17 +1,40 @@
 [package]
 name = "btlv"
 version = "0.1.0"
-edition = "2024"
-description = "A CLI tool to encode/decode Lightning Network, BOLT specified TLV messages"
+edition = "2021"
 authors = ["Peter Neuroth <pet.v.ne@gmail.com>"]
 license = "MIT"
+description = "A fast CLI tool for encoding and decoding Lightning Network TLV (Type-Length-Value) streams"
+documentation = "https://github.com/nepet/btlv"
+homepage = "https://github.com/nepet/btlv"
+repository = "https://github.com/nepet/btlv"
+readme = "README.md"
+keywords = ["lightning", "tlv", "bolt", "bitcoin", "encoding"]
+categories = ["command-line-utilities", "encoding", "cryptography::cryptocurrencies"]
+exclude = [
+    "tests/",
+    ".github/",
+    "*.log",
+    "tmp/",
+]
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.0", features = ["derive"] }
+serde_json = "1.0"
+hex = "0.4"
 
 [[bin]]
 name = "btlv"
 path = "src/main.rs"
 
-[dependencies]
-anyhow = "1.0.99"
-clap = { version = "4.5", features = ["derive"] }
-hex = "0.4.3"
-serde_json = "1"
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
