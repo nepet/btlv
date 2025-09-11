@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, anyhow};
 use clap::{Parser, Subcommand};
-use serde_json::{Value, from_str};
+use serde_json::{Map, Value};
 
 /// Main args of tlv-tool
 #[derive(Parser, Debug)]
@@ -24,13 +24,141 @@ enum Commands {
     },
 }
 
+struct TlvRecord {
+    type_: u64,
+    length: u64,
+    value: Vec<u8>,
+}
+
 fn main() {
     let tool = Tool::parse();
 
-    match tool.command {
-        Commands::Encode { data } => println!("encode {data}"),
-        Commands::Decode { data } => println!("decode {data}"),
+    let r = match tool.command {
+        Commands::Encode { data } => encode_json_to_tlv(&data),
+        Commands::Decode { data } => decode_tlv_to_json(&data),
+    };
+
+    match r {
+        Ok(s) => {
+            println!("{}", s)
+        }
+        Err(e) => eprintln!("Error: {}", e),
     }
+}
+
+fn encode_json_to_tlv(json_str: &str) -> Result<String> {
+    let value: Value = serde_json::from_str(json_str)?;
+    let mut tlv_bytes = Vec::new();
+
+    match value {
+        Value::Object(map) => {
+            let mut sorted: Vec<_> = map.iter().collect();
+            sorted.sort_by_key(|(k, _)| k.parse::<u64>().unwrap_or(0));
+
+            for (type_str, value) in sorted {
+                let type_num: u64 = type_str
+                    .parse()
+                    .context(format!("Invalid type key {}", type_str))?;
+
+                let value_bytes = encode_value(value)?;
+                let record = TlvRecord {
+                    type_: type_num,
+                    length: value_bytes.len() as u64,
+                    value: value_bytes,
+                };
+
+                encode_tlv_record(&record, &mut tlv_bytes);
+            }
+        }
+        _ => {
+            return Err(anyhow!("JSON must be an object"));
+        }
+    }
+
+    Ok(hex::encode(tlv_bytes))
+}
+
+fn decode_tlv_to_json(hex_str: &str) -> Result<String> {
+    let bytes = hex::decode(hex_str)?;
+    let records = parse_tlv_stream(&bytes)?;
+
+    let mut map = Map::new();
+    for record in records {
+        let value = decode_value(&record.value)?;
+        map.insert(record.type_.to_string(), value);
+    }
+
+    let json = Value::Object(map);
+    Ok(serde_json::to_string_pretty(&json)?)
+}
+
+fn encode_value(value: &Value) -> Result<Vec<u8>> {
+    match value {
+        Value::String(s) => {
+            // Try hex encoding first
+            let hex_str = s.strip_prefix("0x").unwrap_or(s);
+            if hex_str.len() % 2 == 0
+                && !hex_str.is_empty()
+                && hex_str.chars().all(|c| c.is_ascii_hexdigit())
+            {
+                if let Ok(bytes) = hex::decode(hex_str) {
+                    return Ok(bytes);
+                }
+            }
+
+            // Fall back to UTF-8
+            Ok(s.as_bytes().to_vec())
+        }
+        _ => Err(anyhow!("Unsupported value type, only string is allowed")),
+    }
+}
+
+fn decode_value(bytes: &[u8]) -> Result<Value> {
+    // Try to decode as UTF-8 string
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        if s.chars()
+            .all(|c| !c.is_ascii_control() || c.is_ascii_whitespace())
+        {
+            return Ok(Value::String(s.to_string()));
+        }
+    }
+
+    // Fall back to hex
+    Ok(Value::String(format!("{}", hex::encode(bytes))))
+}
+
+fn parse_tlv_stream(bytes: &[u8]) -> Result<Vec<TlvRecord>> {
+    let mut records = Vec::new();
+    let mut offset = 0;
+
+    while offset < bytes.len() {
+        let (type_, type_len) = decode_bigsize(&bytes[offset..])?;
+        offset += type_len;
+
+        let (length, length_len) = decode_bigsize(&bytes[offset..])?;
+        offset += length_len;
+
+        if offset + length as usize > bytes.len() {
+            return Err(anyhow!("Invalid TLV: length exceeds remaining bytes"));
+        }
+
+        let value = bytes[offset..offset + length as usize].to_vec();
+        offset += length as usize;
+
+        records.push(TlvRecord {
+            type_,
+            length,
+            value,
+        })
+    }
+
+    Ok(records)
+}
+
+fn encode_tlv_record(record: &TlvRecord, output: &mut Vec<u8>) {
+    output.extend_from_slice(&encode_bigsize(record.type_));
+    output.extend_from_slice(&encode_bigsize(record.length));
+    output.extend_from_slice(&record.value);
 }
 
 fn encode_bigsize(value: u64) -> Vec<u8> {
@@ -59,13 +187,13 @@ fn encode_bigsize(value: u64) -> Vec<u8> {
     }
 }
 
-fn decode_bigsize(bytes: &[u8]) -> Result<u64> {
+fn decode_bigsize(bytes: &[u8]) -> Result<(u64, usize)> {
     if bytes.is_empty() {
         return Err(anyhow!("Empty bytes for bigsize"));
     }
 
     match bytes[0] {
-        0..=0xfc => Ok(bytes[0] as u64),
+        0..=0xfc => Ok((bytes[0] as u64, 1)),
         0xfd => {
             if bytes.len() < 3 {
                 return Err(anyhow!("Insufficient bytes for bigsize fd"));
@@ -74,7 +202,7 @@ fn decode_bigsize(bytes: &[u8]) -> Result<u64> {
             if value < 0xfd {
                 return Err(anyhow!("Non-canonical bigsize encoding"));
             }
-            Ok(value)
+            Ok((value, 3))
         }
         0xfe => {
             if bytes.len() < 5 {
@@ -84,7 +212,7 @@ fn decode_bigsize(bytes: &[u8]) -> Result<u64> {
             if value < 0x10000 {
                 return Err(anyhow!("Non-canonical bigsize encoding"));
             }
-            Ok(value)
+            Ok((value, 5))
         }
         0xff => {
             if bytes.len() < 9 {
@@ -96,7 +224,7 @@ fn decode_bigsize(bytes: &[u8]) -> Result<u64> {
             if value < 0x100000000 {
                 return Err(anyhow!("Non-canonical bigsize encoding"));
             }
-            Ok(value)
+            Ok((value, 9))
         }
     }
 }
@@ -142,7 +270,7 @@ mod test {
 
         for (expected, value) in test_cases {
             let bytes = hex::decode(value).unwrap();
-            let decoded = decode_bigsize(&bytes).unwrap();
+            let (decoded, _) = decode_bigsize(&bytes).unwrap();
             assert_eq!(decoded, expected, "Failed decoding {}", value);
         }
     }
@@ -186,5 +314,24 @@ mod test {
                 expected_keyword
             )
         }
+    }
+
+    #[test]
+    fn test_tlv_roundtrip() {
+        let json = r#"{
+            "0": "0",
+            "252": "hello world",
+            "65553": "02ffffff"
+        }"#;
+
+        let hex = encode_json_to_tlv(json).unwrap();
+        let decoded = decode_tlv_to_json(&hex).unwrap();
+
+        let round_trip: Value = serde_json::from_str(&decoded).unwrap();
+        let obj = round_trip.as_object().unwrap();
+
+        assert_eq!(obj["0"], "0");
+        assert_eq!(obj["252"], "hello world");
+        assert_eq!(obj["65553"], "02ffffff");
     }
 }
