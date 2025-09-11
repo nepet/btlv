@@ -1,57 +1,50 @@
 use anyhow::{Context, Result, anyhow};
-use clap::{ArgGroup, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use serde_json::{Map, Value};
-use std::fs;
+use std::{
+    fs,
+    io::{self, IsTerminal, Read, Write},
+    process,
+};
 
-/// Main args of tlv-tool
+/// btlv - decode and encode Lightnin Network TLV-streams
 #[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-struct Tool {
+#[command(version, author = "Peter Neuroth <pet.v.ne@gmail.com>")]
+#[command(about = "btlv decodes and encodes Lightnin Network TLV-streams")]
+#[command(arg_required_else_help = true)]
+#[command(
+    help_template = "{before-help}{name} {version}\n{author-with-newline}\n{about-with-newline}\n{usage-heading}\n  {usage}\n\n{all-args}{after-help}"
+)]
+struct Btlv {
     #[command(subcommand)]
     command: Commands,
+
+    /// Enable verbose output
+    #[arg(short, long, global = true)]
+    verbose: bool,
 }
 
 #[derive(Subcommand, Debug, Clone)]
 enum Commands {
-    /// Encodes TLV-stream into hex.
-    Encode(EncodeArgs),
-    /// Decodes TLV-stream from hex.
-    Decode(DecodeArgs),
+    /// Encode JSON to TLV hex stream
+    Encode(CommonArgs),
+    /// Decode TLV hex stream to JSON
+    Decode(CommonArgs),
 }
 
 #[derive(Parser, Debug, Clone)]
-#[clap(group(
-    ArgGroup::new("source_type")
-        .required(false)
-        .args(&["file"])
-))]
-struct EncodeArgs {
-    /// The input data or file path.
-    #[arg(index = 1)]
-    input: String,
+struct CommonArgs {
+    /// Input data, file path, or '-' for stdin. If not provided, reads from stdin if available.
+    #[arg(value_name = "INPUT")]
+    input: Option<String>,
+
+    /// Output file path or '-' for stdout (default: stdout)
+    #[arg(short, long, value_name = "FILE")]
+    output: Option<String>,
 
     /// Read input from file.
-    #[arg(short = 'f', long)]
-    file: bool,
-
-    /// Write output to file.
     #[arg(short, long)]
-    output: Option<String>,
-}
-
-#[derive(Parser, Debug, Clone)]
-struct DecodeArgs {
-    /// The input data or file path.
-    #[arg(index = 1)]
-    input: String,
-
-    /// Read input from file.
-    #[arg(short = 'f', long)]
     file: bool,
-
-    /// Write output to file.
-    #[arg(short, long)]
-    output: Option<String>,
 }
 
 struct TlvRecord {
@@ -60,47 +53,100 @@ struct TlvRecord {
     value: Vec<u8>,
 }
 
-fn main() -> Result<()> {
-    let tool = Tool::parse();
+fn main() {
+    let app = Btlv::parse();
 
-    match tool.command {
-        Commands::Encode(args) => {
-            let data = if args.file {
-                fs::read_to_string(&args.input)?
-            } else {
-                args.input
-            };
-
-            let output = encode_json_to_tlv(&data)?;
-
-            if let Some(file) = args.output {
-                fs::write(file, output)?;
-            } else {
-                println!("{}", output);
+    if let Err(e) = run(&app) {
+        eprintln!("Error: {e}");
+        if app.verbose {
+            // Print the full chain of causes
+            let mut source = e.source();
+            while let Some(err) = source {
+                eprintln!("  Caused by: {}", err);
+                source = err.source();
             }
         }
+        process::exit(1);
+    }
+}
+
+fn run(app: &Btlv) -> Result<()> {
+    match &app.command {
+        Commands::Encode(args) => {
+            let input = read_input(&args)?;
+            let output = encode_json_to_tlv(&input)?;
+            write_output(&args, &output)?;
+        }
         Commands::Decode(args) => {
-            let data = if args.file {
-                fs::read_to_string(&args.input)?
-            } else {
-                args.input
-            };
-
-            let output = decode_tlv_to_json(&data)?;
-
-            if let Some(file) = args.output {
-                fs::write(file, output)?;
-            } else {
-                println!("{}", output);
-            }
+            let input = read_input(&args)?;
+            let output = decode_tlv_to_json(&input.trim())?;
+            write_output(&args, &output)?;
         }
     };
 
     Ok(())
 }
 
+fn read_input(args: &CommonArgs) -> Result<String> {
+    match &args.input {
+        Some(path) if path == "-" => read_stdin(),
+        Some(input) => {
+            if args.file {
+                fs::read_to_string(input).with_context(|| format!("Failed to read file: {}", input))
+            } else {
+                Ok(input.clone())
+            }
+        }
+        None => {
+            if io::stdin().is_terminal() {
+                return Err(anyhow!(
+                    "No input provided. Please provide input as an argument, pipe data to stdin, or use '-' to read from stdin."
+                ));
+            }
+            read_stdin()
+        }
+    }
+}
+
+fn read_stdin() -> Result<String> {
+    let mut buffer = String::new();
+    io::stdin()
+        .read_to_string(&mut buffer)
+        .context("Failed to read from stdin")?;
+
+    if buffer.is_empty() {
+        return Err(anyhow!("No input provided"));
+    }
+
+    Ok(buffer)
+}
+
+fn write_output(args: &CommonArgs, content: &str) -> Result<()> {
+    match &args.output {
+        // No output file specified - write to stdout
+        None => {
+            println!("{}", content);
+            io::stdout().flush().context("Failed to flush stdout")?;
+        }
+
+        // Expicit stdout
+        Some(path) if path == "-" => {
+            println!("{}", content);
+            io::stdout().flush().context("Failed to flush stdout")?;
+        }
+
+        // Write to file
+        Some(path) => {
+            fs::write(path, content)
+                .with_context(|| format!("Failed to write to file: {}", path))?;
+        }
+    }
+
+    Ok(())
+}
+
 fn encode_json_to_tlv(json_str: &str) -> Result<String> {
-    let value: Value = serde_json::from_str(json_str)?;
+    let value: Value = serde_json::from_str(json_str).context("Failed to parse JSON input")?;
     let mut tlv_bytes = Vec::new();
 
     match value {
@@ -132,17 +178,17 @@ fn encode_json_to_tlv(json_str: &str) -> Result<String> {
 }
 
 fn decode_tlv_to_json(hex_str: &str) -> Result<String> {
-    let bytes = hex::decode(hex_str)?;
-    let records = parse_tlv_stream(&bytes)?;
+    let bytes = hex::decode(hex_str).context("Invalid hex string")?;
+    let records = parse_tlv_stream(&bytes).context("Invalid TLV stream")?;
 
     let mut map = Map::new();
     for record in records {
-        let value = decode_value(&record.value)?;
+        let value = decode_value(&record.value);
         map.insert(record.type_.to_string(), value);
     }
 
     let json = Value::Object(map);
-    Ok(serde_json::to_string_pretty(&json)?)
+    Ok(serde_json::to_string_pretty(&json).context("Failed to serialize JSON")?)
 }
 
 fn encode_value(value: &Value) -> Result<Vec<u8>> {
@@ -166,18 +212,18 @@ fn encode_value(value: &Value) -> Result<Vec<u8>> {
     }
 }
 
-fn decode_value(bytes: &[u8]) -> Result<Value> {
+fn decode_value(bytes: &[u8]) -> Value {
     // Try to decode as UTF-8 string
     if let Ok(s) = std::str::from_utf8(bytes) {
         if s.chars()
             .all(|c| !c.is_ascii_control() || c.is_ascii_whitespace())
         {
-            return Ok(Value::String(s.to_string()));
+            return Value::String(s.to_string());
         }
     }
 
     // Fall back to hex
-    Ok(Value::String(format!("{}", hex::encode(bytes))))
+    Value::String(format!("{}", hex::encode(bytes)))
 }
 
 fn parse_tlv_stream(bytes: &[u8]) -> Result<Vec<TlvRecord>> {
@@ -185,10 +231,12 @@ fn parse_tlv_stream(bytes: &[u8]) -> Result<Vec<TlvRecord>> {
     let mut offset = 0;
 
     while offset < bytes.len() {
-        let (type_, type_len) = decode_bigsize(&bytes[offset..])?;
+        let (type_, type_len) =
+            decode_bigsize(&bytes[offset..]).context("Failed to decode type from bigsize")?;
         offset += type_len;
 
-        let (length, length_len) = decode_bigsize(&bytes[offset..])?;
+        let (length, length_len) =
+            decode_bigsize(&bytes[offset..]).context("Failed to decode length from bigsize")?;
         offset += length_len;
 
         if offset + length as usize > bytes.len() {
