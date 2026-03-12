@@ -4,13 +4,13 @@ version = "0.1.0"
 edition = "2021"
 authors = ["Peter Neuroth <pet.v.ne@gmail.com>"]
 license = "MIT"
-description = "A fast CLI tool for encoding and decoding Lightning Network TLV (Type-Length-Value) streams"
+description = "Lightning Network BOLT TLV encoding, decoding, and struct mapping"
 documentation = "https://github.com/nepet/btlv"
 homepage = "https://github.com/nepet/btlv"
 repository = "https://github.com/nepet/btlv"
 readme = "README.md"
 keywords = ["lightning", "tlv", "bolt", "bitcoin", "encoding"]
-categories = ["command-line-utilities", "encoding", "cryptography::cryptocurrencies"]
+categories = ["encoding", "cryptography::cryptocurrencies"]
 exclude = [
     "tests/",
     ".github/",
@@ -19,21 +19,17 @@ exclude = [
 ]
 
 [dependencies]
-anyhow = "1.0"
-clap = { version = "4.0", features = ["derive"] }
-serde_json = "1.0"
+thiserror = "2"
 hex = "0.4"
+serde = { version = "1", optional = true }
 
-[[bin]]
-name = "btlv"
-path = "src/main.rs"
+[features]
+default = ["serde"]
+serde = ["dep:serde"]
 
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0"
 
 [package.metadata.docs.rs]
 all-features = true
