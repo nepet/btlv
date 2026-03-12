@@ -3,6 +3,9 @@ pub mod encoding;
 pub mod error;
 pub mod stream;
 
+#[cfg(feature = "serde")]
+mod serde;
+
 pub use error::{Result, TlvError};
 pub use stream::{TlvRecord, TlvStream};
 
@@ -105,6 +108,34 @@ pub mod _macro_support {
 /// assert_eq!(decoded.amt_to_forward, 1000);
 /// assert_eq!(decoded.outgoing_cltv_value, 800000);
 /// assert_eq!(decoded.short_channel_id, None);
+/// ```
+///
+/// # Serde support
+///
+/// With the `serde` feature enabled (on by default), macro-generated structs
+/// implement `Serialize` and `Deserialize`. The wire-format bytes are encoded
+/// as a hex string, matching `TlvStream`'s serde representation.
+///
+/// ```
+/// # #[cfg(feature = "serde")] {
+/// btlv::tlv_struct! {
+///     pub struct Invoice {
+///         #[tlv(2, tu64)]
+///         pub amount_msat: u64,
+///         #[tlv(4, tu64)]
+///         pub expiry: u32,
+///     }
+/// }
+///
+/// let inv = Invoice { amount_msat: 50_000, expiry: 3600 };
+///
+/// // Serialize to JSON (the TLV bytes become a hex string)
+/// let json = serde_json::to_string(&inv).unwrap();
+///
+/// // Deserialize back
+/// let decoded: Invoice = serde_json::from_str(&json).unwrap();
+/// assert_eq!(decoded, inv);
+/// # }
 /// ```
 #[macro_export]
 macro_rules! tlv_struct {
@@ -228,6 +259,22 @@ macro_rules! tlv_struct {
                         $field: $crate::tlv_struct!(@decode_field stream, $type_num, $enc, $optionality),
                     )*
                 })
+            }
+        }
+
+        #[cfg(feature = "serde")]
+        impl ::serde::Serialize for $name {
+            fn serialize<S: ::serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+                let stream: $crate::TlvStream = self.into();
+                ::serde::Serialize::serialize(&stream, serializer)
+            }
+        }
+
+        #[cfg(feature = "serde")]
+        impl<'de> ::serde::Deserialize<'de> for $name {
+            fn deserialize<D: ::serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+                let stream = <$crate::TlvStream as ::serde::Deserialize>::deserialize(deserializer)?;
+                Self::try_from(&stream).map_err(::serde::de::Error::custom)
             }
         }
     };
@@ -474,6 +521,18 @@ mod tests {
             pub optional_fee: Option<u64>,
         }
     );
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn simple_payload_serde_json_roundtrip() {
+        let p = SimplePayload {
+            amount: 999,
+            cltv: 800000,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let d: SimplePayload = serde_json::from_str(&json).unwrap();
+        assert_eq!(d, p);
+    }
 
     #[test]
     fn fixed_u64_roundtrip() {
