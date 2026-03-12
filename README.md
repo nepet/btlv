@@ -4,184 +4,131 @@
 [![Documentation](https://docs.rs/btlv/badge.svg)](https://docs.rs/btlv)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A fast and reliable command-line tool for encoding and decoding Lightning Network TLV (Type-Length-Value) streams.
-
-## What is TLV?
-
-TLV (Type-Length-Value) is a data encoding format used extensively in the Lightning Network protocol. Each record consists of:
-- **Type**: A `bigsize` encoded identifier
-- **Length**: A `bigsize` encoded length of the value
-- **Value**: The actual data bytes
-
-This tool implements the TLV specification from [BOLT #1](https://github.com/lightning/bolts/blob/master/01-messaging.md#type-length-value-format) including proper `bigsize` encoding/decoding.
+A Rust library for encoding and decoding Lightning Network TLV (Type-Length-Value) streams, compliant with [BOLT #1](https://github.com/lightning/bolts/blob/master/01-messaging.md#type-length-value-format).
 
 ## Features
 
-- ✅ **BOLT-compliant**: Implements Lightning Network TLV specification exactly
-- ✅ **Bidirectional**: Encode JSON to TLV hex streams and decode back
-- ✅ **Flexible I/O**: Read from files, stdin, or command arguments
-- ✅ **Smart value handling**: Automatic detection of hex strings vs UTF-8 text
-- ✅ **Robust error handling**: Detailed error messages with optional verbose output
+- **BOLT-compliant** bigsize and TLV encoding with canonical-form validation
+- **`TlvStream`** container with sorted, deduplicated records and typed accessors
+- **`tlv_struct!`** macro for declarative struct-to-TLV mapping
+- **`tu64`** truncated unsigned integer encoding/decoding
+- **Serde support** (feature-gated) — serialize/deserialize `TlvStream` as hex strings
+- **Spec test vectors** from BOLT #1 appendices A and B
 
 ## Installation
 
-### From crates.io
+Add to your `Cargo.toml`:
 
-```bash
-cargo install btlv
+```toml
+[dependencies]
+btlv = "0.1"
 ```
 
-### From source
+Serde support is enabled by default. To disable it:
 
-```bash
-git clone https://github.com/yourusername/btlv.git
-cd btlv
-cargo install --path .
+```toml
+[dependencies]
+btlv = { version = "0.1", default-features = false }
+```
+
+With serde enabled, `tlv_struct!` structs are directly serializable (they delegate to `TlvStream`'s hex-string encoding):
+
+```rust
+let payload = OnionPayload {
+    amt_to_forward: 1000,
+    outgoing_cltv_value: 800_000,
+    short_channel_id: None,
+};
+
+let json = serde_json::to_string(&payload).unwrap();
+let decoded: OnionPayload = serde_json::from_str(&json).unwrap();
 ```
 
 ## Usage
 
-### Basic Commands
+### Working with TlvStream directly
 
-```bash
-# Encode JSON to TLV hex
-btlv encode '{"0": "hello", "1": "0x48656c6c6f"}'
+```rust
+use btlv::TlvStream;
 
-# Decode TLV hex to JSON
-btlv decode "000568656c6c6f01054865c6c6c6f"
+// Build a stream
+let mut stream = TlvStream::default();
+stream.set_tu64(2, 1000);       // tu64-encoded amount
+stream.set_tu64(4, 800_000);    // tu64-encoded CLTV
+stream.insert(6, vec![0x00, 0x73, 0x00, 0x0f, 0x2c, 0x00, 0x07, 0x00]);
 
-# Use files
-btlv encode -f input.json -o output.hex
-btlv decode -f tlv_data.hex -o decoded.json
+// Serialize to wire format
+let bytes = stream.to_bytes().unwrap();
+
+// Parse back
+let decoded = TlvStream::from_bytes(&bytes).unwrap();
+assert_eq!(decoded.get_tu64(2).unwrap(), Some(1000));
 ```
 
-### Input/Output Options
+### Declarative struct mapping with `tlv_struct!`
 
-```bash
-# Read from stdin
-echo '{"252": "hello world"}' | btlv encode
-
-# Write to file
-btlv encode '{"0": "test"}' -o output.hex
-
-# Read from file
-btlv encode input.json --file
-
-# Explicit stdin/stdout
-btlv decode - < data.hex
-btlv encode data.json -o -
-```
-
-### Examples
-
-#### Encoding JSON to TLV
-
-```bash
-$ btlv encode '{"0": "hello", "252": "world", "65536": "0xdeadbeef"}'
-000568656c6c6f016c776f726c64fe00010000048deadbeef
-```
-
-#### Decoding TLV to JSON
-
-```bash
-$ btlv decode "fc0568656c6c6f"
-{
-  "252": "hello"
+```rust
+btlv::tlv_struct! {
+    pub struct OnionPayload {
+        #[tlv(2, tu64)]
+        pub amt_to_forward: u64,
+        #[tlv(4, tu64)]
+        pub outgoing_cltv_value: u32,
+        #[tlv(6, bytes)]
+        pub short_channel_id: Option<[u8; 8]>,
+    }
 }
+
+let payload = OnionPayload {
+    amt_to_forward: 1000,
+    outgoing_cltv_value: 800_000,
+    short_channel_id: None,
+};
+
+// Serialize to TLV bytes and back
+let bytes = payload.to_tlv_bytes().unwrap();
+let decoded = OnionPayload::from_tlv_bytes(&bytes).unwrap();
+assert_eq!(decoded.amt_to_forward, 1000);
 ```
 
-#### Working with Files
+The macro supports three encoding tags:
 
-```bash
-# Create a JSON file
-echo '{"1": "Lightning", "1000": "Network"}' > message.json
+| Tag | Wire format | Rust types |
+|-------|------------------------------------------|-------------------------------|
+| `tu64` | Variable-length minimal big-endian int | `u64`, `u32` |
+| `u64` | Fixed 8-byte big-endian | `u64` |
+| `bytes` | Raw bytes | `Vec<u8>`, `[u8; N]` |
 
-# Encode to TLV
-btlv encode message.json --file -o message.tlv
+Fields wrapped in `Option<T>` are automatically optional — omitted when `None`, decoded as `None` when absent.
 
-# Decode back
-btlv decode message.tlv --file
-```
+## Core types
 
-### Value Handling
+| Type | Description |
+|------------|----------------------------------------------------------------------|
+| `TlvStream` | Sorted, deduplicated record container with typed get/set accessors |
+| `TlvRecord` | A single type-value pair |
+| `TlvError` | Error enum covering duplicate types, ordering, truncation, overflow |
 
-The tool intelligently handles different value types:
+### Bigsize encoding
 
-- **Hex strings**: Strings starting with `0x` or valid hex are encoded as bytes
-- **UTF-8 text**: Regular strings are encoded as UTF-8 bytes
-- **Auto-detection**: On decode, tries UTF-8 first, falls back to hex display
+Implements the BOLT #1 variable-length integer format:
 
-```bash
-# These produce the same TLV output:
-btlv encode '{"0": "0x48656c6c6f"}'  # Hex input
-btlv encode '{"0": "Hello"}'         # UTF-8 input (if "Hello" = 0x48656c6c6f)
-```
-
-### Error Handling
-
-Use `--verbose` for detailed error information:
-
-```bash
-$ btlv decode "invalid_hex" --verbose
-Error: Invalid hex string
-  Caused by: Odd number of digits
-```
-
-## JSON Format
-
-Input JSON must be an object where:
-- **Keys**: String representations of type numbers (`"0"`, `"252"`, `"65536"`)
-- **Values**: Strings containing either UTF-8 text or hex data
-
-```json
-{
-  "0": "hello world",
-  "1": "0xdeadbeef",
-  "252": "Lightning Network",
-  "65535": "0x012345"
-}
-```
-
-## Lightning Network Context
-
-This tool is useful for:
-- **Debugging Lightning messages**: Inspect TLV fields in BOLT messages
-- **Protocol development**: Test TLV encoding/decoding
-- **Data analysis**: Convert between human-readable JSON and wire format
-- **Learning**: Understand how Lightning Network encodes data
-
-## Technical Details
-
-### Bigsize Encoding
-
-Implements the Lightning Network `bigsize` variable-length integer encoding:
-
-| Value Range | Encoding |
-|-------------|----------|
+| Value range | Wire encoding |
+|------------------------------|-------------------|
 | `0` to `252` | 1 byte |
 | `253` to `65535` | `0xfd` + 2 bytes |
 | `65536` to `4294967295` | `0xfe` + 4 bytes |
-| `4294967296` to `18446744073709551615` | `0xff` + 8 bytes |
-
-### TLV Record Structure
-
-```
-[type: bigsize][length: bigsize][value: length bytes]
-```
-
-Records are concatenated in ascending type order.
+| `4294967296` to `2^64 - 1` | `0xff` + 8 bytes |
 
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request or open an issue.
 
-### Running Tests
-
 ```bash
 cargo test
 ```
 
-The test suite includes official BOLT specification test vectors for bigsize encoding.
+The test suite includes BOLT #1 specification test vectors for bigsize, tu64, and TLV stream encoding.
 
 ## License
 
