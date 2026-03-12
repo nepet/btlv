@@ -1,3 +1,6 @@
+#[cfg(feature = "bigsize")]
+pub mod bigsize;
+#[cfg(not(feature = "bigsize"))]
 pub(crate) mod bigsize;
 pub(crate) mod encoding;
 pub mod error;

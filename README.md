@@ -31,6 +31,21 @@ Serde support is enabled by default. To disable it:
 btlv = { version = "0.2", default-features = false }
 ```
 
+To enable standalone BigSize encode/decode (e.g. for custom wire protocols):
+
+```toml
+[dependencies]
+btlv = { version = "0.2", features = ["bigsize"] }
+```
+
+```rust
+use btlv::bigsize;
+
+let encoded = bigsize::encode(253);
+let (value, bytes_read) = bigsize::decode(&encoded).unwrap();
+assert_eq!(value, 253);
+```
+
 With serde enabled, `tlv_struct!` structs are directly serializable (they delegate to `TlvStream`'s hex-string encoding):
 
 ```rust
