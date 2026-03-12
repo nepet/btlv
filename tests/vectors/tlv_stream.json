@@ -1,0 +1,115 @@
+{
+  "description": "BOLT #1 TLV stream decoding test vectors",
+  "source": "https://github.com/lightning/bolts/blob/master/01-messaging.md",
+  "valid": [
+    {
+      "name": "empty stream",
+      "hex": "",
+      "records": []
+    },
+    {
+      "name": "unknown odd type 0x21",
+      "hex": "2100",
+      "records": [{ "type": 33, "value": "" }]
+    },
+    {
+      "name": "unknown odd type 0x0201",
+      "hex": "fd020100",
+      "records": [{ "type": 513, "value": "" }]
+    },
+    {
+      "name": "unknown odd type 0x00fd",
+      "hex": "fd00fd00",
+      "records": [{ "type": 253, "value": "" }]
+    },
+    {
+      "name": "unknown odd type 0x00ff",
+      "hex": "fd00ff00",
+      "records": [{ "type": 255, "value": "" }]
+    },
+    {
+      "name": "unknown odd type 0x02000001",
+      "hex": "fe0200000100",
+      "records": [{ "type": 33554433, "value": "" }]
+    },
+    {
+      "name": "unknown odd type 0x0200000000000001",
+      "hex": "ff020000000000000100",
+      "records": [{ "type": 144115188075855873, "value": "" }]
+    },
+    {
+      "name": "tlv1 amount_msat=0",
+      "hex": "0100",
+      "records": [{ "type": 1, "value": "" }]
+    },
+    {
+      "name": "tlv1 amount_msat=1",
+      "hex": "010101",
+      "records": [{ "type": 1, "value": "01" }]
+    },
+    {
+      "name": "tlv1 amount_msat=256",
+      "hex": "01020100",
+      "records": [{ "type": 1, "value": "0100" }]
+    },
+    {
+      "name": "tlv1 amount_msat=65536",
+      "hex": "0103010000",
+      "records": [{ "type": 1, "value": "010000" }]
+    },
+    {
+      "name": "tlv1 amount_msat=16777216",
+      "hex": "010401000000",
+      "records": [{ "type": 1, "value": "01000000" }]
+    },
+    {
+      "name": "tlv1 amount_msat=4294967296",
+      "hex": "01050100000000",
+      "records": [{ "type": 1, "value": "0100000000" }]
+    },
+    {
+      "name": "tlv1 amount_msat=1099511627776",
+      "hex": "0106010000000000",
+      "records": [{ "type": 1, "value": "010000000000" }]
+    },
+    {
+      "name": "tlv1 amount_msat=281474976710656",
+      "hex": "010701000000000000",
+      "records": [{ "type": 1, "value": "01000000000000" }]
+    },
+    {
+      "name": "tlv1 amount_msat=72057594037927936",
+      "hex": "01080100000000000000",
+      "records": [{ "type": 1, "value": "0100000000000000" }]
+    },
+    {
+      "name": "tlv2 scid=0x0000000000000226",
+      "hex": "02080000000000000226",
+      "records": [{ "type": 2, "value": "0000000000000226" }]
+    },
+    {
+      "name": "tlv3 node_id + amounts",
+      "hex": "0331023da092f6980e58d2c037173180e9a465476026ee50f96695963e8efe436f54eb00000000000000010000000000000002",
+      "records": [{ "type": 3, "value": "023da092f6980e58d2c037173180e9a465476026ee50f96695963e8efe436f54eb00000000000000010000000000000002" }]
+    },
+    {
+      "name": "tlv4 cltv_delta=550",
+      "hex": "fd00fe020226",
+      "records": [{ "type": 254, "value": "0226" }]
+    }
+  ],
+  "invalid": [
+    { "name": "type truncated (fd)",                  "hex": "fd" },
+    { "name": "type truncated (fd01)",                "hex": "fd01" },
+    { "name": "type not minimally encoded",           "hex": "fd000100" },
+    { "name": "missing length",                       "hex": "fd0101" },
+    { "name": "length truncated (0f fd)",             "hex": "0ffd" },
+    { "name": "length truncated (0f fd26)",           "hex": "0ffd26" },
+    { "name": "missing value",                        "hex": "0ffd2602" },
+    { "name": "length not minimally encoded",         "hex": "0ffd000100" },
+    { "name": "ordering: type 1 after type 2",        "hex": "0208000000000000022601012a" },
+    { "name": "duplicate type 2",                     "hex": "0208000000000000023102080000000000000451" },
+    { "name": "ordering: type 15 after type 31",      "hex": "1f000f012a" },
+    { "name": "duplicate type 31",                    "hex": "1f001f012a" }
+  ]
+}

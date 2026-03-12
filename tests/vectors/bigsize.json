@@ -1,0 +1,26 @@
+{
+  "description": "BOLT #1 BigSize encoding/decoding test vectors",
+  "source": "https://github.com/lightning/bolts/blob/master/01-messaging.md",
+  "valid": [
+    { "name": "zero",            "value": 0,                    "hex": "00" },
+    { "name": "one byte high",   "value": 252,                  "hex": "fc" },
+    { "name": "two byte low",    "value": 253,                  "hex": "fd00fd" },
+    { "name": "two byte high",   "value": 65535,                "hex": "fdffff" },
+    { "name": "four byte low",   "value": 65536,                "hex": "fe00010000" },
+    { "name": "four byte high",  "value": 4294967295,           "hex": "feffffffff" },
+    { "name": "eight byte low",  "value": 4294967296,           "hex": "ff0000000100000000" },
+    { "name": "eight byte high", "value": 18446744073709551615, "hex": "ffffffffffffffffff" }
+  ],
+  "invalid": [
+    { "name": "two byte not canonical",   "hex": "fd00fc",                 "error": "non_canonical" },
+    { "name": "four byte not canonical",  "hex": "fe0000ffff",             "error": "non_canonical" },
+    { "name": "eight byte not canonical", "hex": "ff00000000ffffffff",     "error": "non_canonical" },
+    { "name": "two byte short read",      "hex": "fd00",                   "error": "truncated" },
+    { "name": "four byte short read",     "hex": "feffff",                 "error": "truncated" },
+    { "name": "eight byte short read",    "hex": "ffffffffff",             "error": "truncated" },
+    { "name": "one byte no read",         "hex": "",                       "error": "truncated" },
+    { "name": "two byte no read",         "hex": "fd",                     "error": "truncated" },
+    { "name": "four byte no read",        "hex": "fe",                     "error": "truncated" },
+    { "name": "eight byte no read",       "hex": "ff",                     "error": "truncated" }
+  ]
+}

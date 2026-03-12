@@ -1,0 +1,28 @@
+{
+  "description": "tu64 (truncated uint64) encode/decode vectors, derived from BOLT #1 Appendix B tlv1 (amount_msat) entries",
+  "source": "https://github.com/lightning/bolts/blob/master/01-messaging.md#appendix-b-type-length-value-test-vectors",
+  "valid": [
+    { "name": "zero",   "value": 0,                    "hex": "" },
+    { "name": "one",    "value": 1,                    "hex": "01" },
+    { "name": "256",    "value": 256,                  "hex": "0100" },
+    { "name": "64k",    "value": 65536,                "hex": "010000" },
+    { "name": "16M",    "value": 16777216,             "hex": "01000000" },
+    { "name": "4G",     "value": 4294967296,           "hex": "0100000000" },
+    { "name": "1T",     "value": 1099511627776,        "hex": "010000000000" },
+    { "name": "256T",   "value": 281474976710656,      "hex": "01000000000000" },
+    { "name": "64P",    "value": 72057594037927936,    "hex": "0100000000000000" }
+  ],
+  "invalid_leading_zero": [
+    { "name": "1 byte leading zero",  "hex": "00" },
+    { "name": "2 byte leading zero",  "hex": "0001" },
+    { "name": "3 byte leading zero",  "hex": "000100" },
+    { "name": "4 byte leading zero",  "hex": "00010000" },
+    { "name": "5 byte leading zero",  "hex": "0001000000" },
+    { "name": "6 byte leading zero",  "hex": "000100000000" },
+    { "name": "7 byte leading zero",  "hex": "00010000000000" },
+    { "name": "8 byte leading zero",  "hex": "0001000000000000" }
+  ],
+  "invalid_overflow": [
+    { "name": "9 bytes", "hex": "ffffffffffffffffff" }
+  ]
+}
