@@ -21,14 +21,14 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-btlv = "0.1"
+btlv = "0.2"
 ```
 
 Serde support is enabled by default. To disable it:
 
 ```toml
 [dependencies]
-btlv = { version = "0.1", default-features = false }
+btlv = { version = "0.2", default-features = false }
 ```
 
 With serde enabled, `tlv_struct!` structs are directly serializable (they delegate to `TlvStream`'s hex-string encoding):

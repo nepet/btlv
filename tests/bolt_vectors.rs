@@ -3,7 +3,8 @@
 //! Test data lives in `tests/vectors/*.json` and is loaded at test time.
 //! https://github.com/lightning/bolts/blob/master/01-messaging.md
 
-use btlv::{bigsize, encoding, TlvStream};
+use btlv::_macro_support::{bigsize, encoding};
+use btlv::TlvStream;
 use serde::Deserialize;
 use std::fs;
 
@@ -209,15 +210,15 @@ fn bolt_tlv_stream_decode_valid() {
             v.name,
         );
 
+        let recs: Vec<_> = stream.iter().collect();
         for (i, expected) in v.records.iter().enumerate() {
-            let rec = &stream.0[i];
             assert_eq!(
-                rec.type_, expected.type_,
+                recs[i].type_, expected.type_,
                 "'{}' record {i}: type mismatch",
                 v.name,
             );
             assert_eq!(
-                hex::encode(&rec.value),
+                hex::encode(&recs[i].value),
                 expected.value,
                 "'{}' record {i}: value mismatch",
                 v.name,

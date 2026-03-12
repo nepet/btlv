@@ -25,7 +25,7 @@ impl<'de> Deserialize<'de> for TlvStream {
             }
             fn visit_str<E: DeError>(self, s: &str) -> std::result::Result<Self::Value, E> {
                 let bytes = hex::decode(s).map_err(E::custom)?;
-                TlvStream::from_bytes_auto(&bytes).map_err(E::custom)
+                TlvStream::from_bytes(&bytes).map_err(E::custom)
             }
         }
         deserializer.deserialize_str(V)
@@ -46,18 +46,19 @@ mod tests {
 
     #[test]
     fn json_hex_roundtrip() {
-        let stream = TlvStream(vec![rec(1, &[0x01, 0x02]), rec(5, &[0xaa])]);
+        let stream = TlvStream::from(vec![rec(1, &[0x01, 0x02]), rec(5, &[0xaa])]);
 
         let json = serde_json::to_string(&stream).unwrap();
         let s: String = serde_json::from_str(&json).unwrap();
         assert_eq!(s, "010201020501aa");
 
         let back: TlvStream = serde_json::from_str(&json).unwrap();
-        assert_eq!(back.0.len(), 2);
-        assert_eq!(back.0[0].type_, 1);
-        assert_eq!(back.0[0].value, vec![0x01, 0x02]);
-        assert_eq!(back.0[1].type_, 5);
-        assert_eq!(back.0[1].value, vec![0xaa]);
+        assert_eq!(back.len(), 2);
+        let recs: Vec<_> = back.iter().collect();
+        assert_eq!(recs[0].type_, 1);
+        assert_eq!(recs[0].value, vec![0x01, 0x02]);
+        assert_eq!(recs[1].type_, 5);
+        assert_eq!(recs[1].value, vec![0xaa]);
     }
 
     #[test]

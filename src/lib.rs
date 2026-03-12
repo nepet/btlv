@@ -1,5 +1,5 @@
-pub mod bigsize;
-pub mod encoding;
+pub(crate) mod bigsize;
+pub(crate) mod encoding;
 pub mod error;
 pub mod stream;
 
@@ -13,6 +13,14 @@ pub use stream::{TlvRecord, TlvStream};
 #[doc(hidden)]
 pub mod _macro_support {
     use crate::error::{Result, TlvError};
+
+    // Re-export for integration tests; not part of the public API.
+    pub mod bigsize {
+        pub use crate::bigsize::{decode, encode};
+    }
+    pub mod encoding {
+        pub use crate::encoding::{decode_tu64, encode_tu64};
+    }
 
     pub trait TlvTu64Encode {
         fn to_tu64_value(&self) -> u64;
@@ -29,16 +37,16 @@ pub mod _macro_support {
     }
 
     pub trait TlvTu64Decode: Sized {
-        fn from_tu64_value(v: u64) -> Self;
+        fn from_tu64_value(v: u64) -> Result<Self>;
     }
     impl TlvTu64Decode for u64 {
-        fn from_tu64_value(v: u64) -> Self {
-            v
+        fn from_tu64_value(v: u64) -> Result<Self> {
+            Ok(v)
         }
     }
     impl TlvTu64Decode for u32 {
-        fn from_tu64_value(v: u64) -> Self {
-            v as u32
+        fn from_tu64_value(v: u64) -> Result<Self> {
+            u32::try_from(v).map_err(|_| TlvError::Overflow)
         }
     }
 
@@ -314,11 +322,14 @@ macro_rules! tlv_struct {
     (@decode_field $stream:ident, $type_num:expr, tu64, required) => {{
         let v = $stream.get_tu64($type_num)?
             .ok_or($crate::TlvError::MissingRequired($type_num))?;
-        $crate::_macro_support::TlvTu64Decode::from_tu64_value(v)
+        $crate::_macro_support::TlvTu64Decode::from_tu64_value(v)?
     }};
     // === Decode: tu64 optional ===
     (@decode_field $stream:ident, $type_num:expr, tu64, optional) => {{
-        $stream.get_tu64($type_num)?.map($crate::_macro_support::TlvTu64Decode::from_tu64_value)
+        match $stream.get_tu64($type_num)? {
+            Some(v) => Some($crate::_macro_support::TlvTu64Decode::from_tu64_value(v)?),
+            None => None,
+        }
     }};
     // === Decode: u64 required ===
     (@decode_field $stream:ident, $type_num:expr, u64, required) => {{
@@ -348,24 +359,24 @@ macro_rules! tlv_struct {
 mod tests {
     use super::*;
 
-    // Mixed required and optional fields — use @impl_struct directly
-    tlv_struct!(@impl_struct
+    // Mixed required and optional fields
+    tlv_struct! {
         /// An onion payload for testing.
         pub struct OnionPayload {
             /// Amount to forward in msat
-            (2, tu64, required)
+            #[tlv(2, tu64)]
             pub amt_to_forward: u64,
             /// Outgoing CLTV value
-            (4, tu64, required)
+            #[tlv(4, tu64)]
             pub outgoing_cltv_value: u32,
             /// Short channel ID
-            (6, bytes, optional)
+            #[tlv(6, bytes)]
             pub short_channel_id: Option<[u8; 8]>,
             /// Payment secret
-            (8, bytes, optional)
+            #[tlv(8, bytes)]
             pub payment_secret: Option<[u8; 32]>,
         }
-    );
+    }
 
     #[test]
     fn onion_payload_roundtrip_all_fields() {
@@ -492,14 +503,14 @@ mod tests {
     }
 
     // Struct with required Vec<u8> bytes
-    tlv_struct!(@impl_struct
+    tlv_struct! {
         pub struct WithRequiredBytes {
-            (1, bytes, required)
+            #[tlv(1, bytes)]
             pub data: Vec<u8>,
-            (3, tu64, required)
+            #[tlv(3, tu64)]
             pub count: u64,
         }
-    );
+    }
 
     #[test]
     fn required_bytes_roundtrip() {
@@ -513,14 +524,14 @@ mod tests {
     }
 
     // Fixed u64 encoding
-    tlv_struct!(@impl_struct
+    tlv_struct! {
         pub struct FixedU64Struct {
-            (65537, u64, required)
+            #[tlv(65537, u64)]
             pub extra_fee: u64,
-            (65539, u64, optional)
+            #[tlv(65539, u64)]
             pub optional_fee: Option<u64>,
         }
-    );
+    }
 
     #[cfg(feature = "serde")]
     #[test]

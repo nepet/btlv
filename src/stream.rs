@@ -11,7 +11,7 @@ pub struct TlvRecord {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct TlvStream(pub Vec<TlvRecord>);
+pub struct TlvStream(pub(crate) Vec<TlvRecord>);
 
 impl TlvStream {
     /// Serialize the stream to wire-format bytes.
@@ -84,14 +84,6 @@ impl TlvStream {
         }
 
         Self::from_bytes(remaining)
-    }
-
-    /// Auto-detect whether input has a length prefix, trying prefixed first.
-    pub fn from_bytes_auto(bytes: &[u8]) -> Result<Self> {
-        if let Ok(stream) = Self::from_bytes_with_length_prefix(bytes) {
-            return Ok(stream);
-        }
-        Self::from_bytes(bytes)
     }
 
     /// Get a reference to the value of a TLV record by type.
@@ -180,8 +172,10 @@ impl TryFrom<&[u8]> for TlvStream {
 }
 
 impl From<Vec<TlvRecord>> for TlvStream {
-    fn from(v: Vec<TlvRecord>) -> Self {
-        TlvStream(v)
+    fn from(mut recs: Vec<TlvRecord>) -> Self {
+        recs.sort_by_key(|r| r.type_);
+        recs.dedup_by_key(|r| r.type_);
+        TlvStream(recs)
     }
 }
 
@@ -206,16 +200,17 @@ mod tests {
 
     #[test]
     fn encode_then_decode_roundtrip() {
-        let stream = TlvStream(vec![rec(1, &[0x01, 0x02]), rec(5, &[0xaa])]);
+        let stream = TlvStream::from(vec![rec(1, &[0x01, 0x02]), rec(5, &[0xaa])]);
         let bytes = stream.to_bytes().unwrap();
         assert_eq!(hex::encode(&bytes), "010201020501aa");
 
         let decoded = TlvStream::from_bytes(&bytes).unwrap();
-        assert_eq!(decoded.0.len(), 2);
-        assert_eq!(decoded.0[0].type_, 1);
-        assert_eq!(decoded.0[0].value, vec![0x01, 0x02]);
-        assert_eq!(decoded.0[1].type_, 5);
-        assert_eq!(decoded.0[1].value, vec![0xaa]);
+        assert_eq!(decoded.len(), 2);
+        let recs: Vec<_> = decoded.iter().collect();
+        assert_eq!(recs[0].type_, 1);
+        assert_eq!(recs[0].value, vec![0x01, 0x02]);
+        assert_eq!(recs[1].type_, 5);
+        assert_eq!(recs[1].value, vec![0xaa]);
     }
 
     #[test]
@@ -228,7 +223,7 @@ mod tests {
 
     #[test]
     fn bigsize_boundary_minimal_encodings() {
-        let stream = TlvStream(vec![
+        let stream = TlvStream::from(vec![
             rec(0x00fc, &[0x11]),
             rec(0x00fd, &[0x22]),
             rec(0x0001_0000, &[0x33]),
@@ -236,9 +231,10 @@ mod tests {
 
         let bytes = stream.to_bytes().unwrap();
         let back = TlvStream::from_bytes(&bytes).unwrap();
-        assert_eq!(back.0[0].type_, 0x00fc);
-        assert_eq!(back.0[1].type_, 0x00fd);
-        assert_eq!(back.0[2].type_, 0x0001_0000);
+        let recs: Vec<_> = back.iter().collect();
+        assert_eq!(recs[0].type_, 0x00fc);
+        assert_eq!(recs[1].type_, 0x00fd);
+        assert_eq!(recs[2].type_, 0x0001_0000);
     }
 
     #[test]
@@ -325,19 +321,19 @@ mod tests {
 
     #[test]
     fn set_u64_overwrite_keeps_order() {
-        let mut s = TlvStream(vec![rec(1, &[0xaa]), rec(10, &[0xbb])]);
+        let mut s = TlvStream::from(vec![rec(1, &[0xaa]), rec(10, &[0xbb])]);
 
         s.set_u64(5, 7);
         assert_eq!(
-            s.0.iter().map(|r| r.type_).collect::<Vec<_>>(),
+            s.iter().map(|r| r.type_).collect::<Vec<_>>(),
             vec![1, 5, 10]
         );
         assert_eq!(s.get_u64(5).unwrap(), Some(7));
 
         s.set_u64(5, 9);
-        let types: Vec<u64> = s.0.iter().map(|r| r.type_).collect();
+        let types: Vec<u64> = s.iter().map(|r| r.type_).collect();
         assert_eq!(types, vec![1, 5, 10]);
-        assert_eq!(s.0.iter().filter(|r| r.type_ == 5).count(), 1);
+        assert_eq!(s.iter().filter(|r| r.type_ == 5).count(), 1);
         assert_eq!(s.get_u64(5).unwrap(), Some(9));
     }
 
@@ -356,19 +352,19 @@ mod tests {
 
     #[test]
     fn set_tu64_overwrite_keeps_order() {
-        let mut s = TlvStream(vec![rec(1, &[0xaa]), rec(10, &[0xbb])]);
+        let mut s = TlvStream::from(vec![rec(1, &[0xaa]), rec(10, &[0xbb])]);
 
         s.set_tu64(5, 7);
         assert_eq!(
-            s.0.iter().map(|r| r.type_).collect::<Vec<_>>(),
+            s.iter().map(|r| r.type_).collect::<Vec<_>>(),
             vec![1, 5, 10]
         );
         assert_eq!(s.get_tu64(5).unwrap(), Some(7));
 
         s.set_tu64(5, 9);
-        let types: Vec<u64> = s.0.iter().map(|r| r.type_).collect();
+        let types: Vec<u64> = s.iter().map(|r| r.type_).collect();
         assert_eq!(types, vec![1, 5, 10]);
-        assert_eq!(s.0.iter().filter(|r| r.type_ == 5).count(), 1);
+        assert_eq!(s.iter().filter(|r| r.type_ == 5).count(), 1);
         assert_eq!(s.get_tu64(5).unwrap(), Some(9));
     }
 
@@ -377,7 +373,7 @@ mod tests {
         let mut s = TlvStream::default();
         s.set_tu64(3, 0);
 
-        let rec = s.0.iter().find(|r| r.type_ == 3).unwrap();
+        let rec = s.iter().find(|r| r.type_ == 3).unwrap();
         assert!(rec.value.is_empty());
 
         let bytes = s.to_bytes().unwrap();
@@ -393,18 +389,18 @@ mod tests {
 
     #[test]
     fn get_tu64_rejects_non_minimal_and_too_long() {
-        let mut s = TlvStream::default();
-        s.0.push(TlvRecord {
+        // Construct with invalid tu64 value (leading zero) by bypassing insert
+        let s = TlvStream(vec![TlvRecord {
             type_: 9,
             value: vec![0x00, 0x01],
-        });
+        }]);
         assert!(s.get_tu64(9).is_err());
 
-        let mut s2 = TlvStream::default();
-        s2.0.push(TlvRecord {
+        // Value too long for tu64
+        let s2 = TlvStream(vec![TlvRecord {
             type_: 9,
             value: vec![0; 9],
-        });
+        }]);
         assert!(s2.get_tu64(9).is_err());
     }
 
@@ -457,7 +453,7 @@ mod tests {
 
     #[test]
     fn try_from_bytes() {
-        let s = TlvStream(vec![rec(1, &[0xaa])]);
+        let s = TlvStream::from(vec![rec(1, &[0xaa])]);
         let bytes = s.to_bytes().unwrap();
         let s2 = TlvStream::try_from(bytes.as_slice()).unwrap();
         assert_eq!(s, s2);
@@ -471,5 +467,4 @@ mod tests {
         let s2 = TlvStream::from_bytes(&bytes).unwrap();
         assert!(s2.is_empty());
     }
-
 }
